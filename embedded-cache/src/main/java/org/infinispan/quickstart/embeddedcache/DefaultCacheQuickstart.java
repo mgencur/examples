@@ -22,8 +22,20 @@
  */
 package org.infinispan.quickstart.embeddedcache;
 
+import javax.transaction.TransactionManager;
+
 import org.infinispan.Cache;
+import org.infinispan.CacheImpl;
+import org.infinispan.configuration.cache.CacheMode;
+import org.infinispan.configuration.cache.Configuration;
+import org.infinispan.configuration.cache.ConfigurationBuilder;
+import org.infinispan.configuration.global.GlobalConfiguration;
+import org.infinispan.configuration.global.GlobalConfigurationBuilder;
 import org.infinispan.manager.DefaultCacheManager;
+import org.infinispan.transaction.LockingMode;
+import org.infinispan.transaction.TransactionMode;
+import org.infinispan.transaction.lookup.JBossStandaloneJTAManagerLookup;
+import org.infinispan.util.concurrent.IsolationLevel;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.infinispan.quickstart.embeddedcache.util.Assert.assertEqual;
@@ -33,11 +45,37 @@ import static org.infinispan.quickstart.embeddedcache.util.Assert.assertTrue;
 public class DefaultCacheQuickstart {
 
    public static void main(String args[]) throws Exception {
-	   Cache<Object, Object> cache = new DefaultCacheManager().getCache();
+       GlobalConfiguration glob = new GlobalConfigurationBuilder()
+           .nonClusteredDefault()
+           .globalJmxStatistics().enable()
+           .build();
+
+       Configuration loc = new ConfigurationBuilder().clustering().cacheMode(CacheMode.LOCAL).transaction()
+                                   .transactionMode(TransactionMode.TRANSACTIONAL)
+                                   .autoCommit(true).lockingMode(LockingMode.OPTIMISTIC)
+                                   .transactionManagerLookup(new JBossStandaloneJTAManagerLookup())
+                                   .locking().isolationLevel(IsolationLevel.READ_COMMITTED)
+                                   .loaders().passivation(false).preload(false).shared(false)
+                                   .build();
+
+      Cache<Object, Object> cache = new DefaultCacheManager(glob, loc, true).getCache();
+      TransactionManager tm = ((CacheImpl) cache).getAdvancedCache().getTransactionManager();
+      System.out.println("Transaction: " + tm.getClass().getName());
       
-      // Add a entry
-      cache.put("key", "value");
-      // Validate the entry is now in the cache
+      try {
+          tm.begin();
+          System.out.println(tm.getTransaction().toString());
+          // Add a entry
+          cache.put("key", "value");
+          // Validate the entry is now in the cache
+          tm.commit();
+      } catch (Exception e) {
+          try {
+              if (tm != null) {
+                  tm.rollback();
+              }
+          } catch (Exception ex) {}
+      }
       assertEqual(1, cache.size());
       assertTrue(cache.containsKey("key"));
       // Remove the entry from the cache
